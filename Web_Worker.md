@@ -6,18 +6,35 @@ JavaScript语言采用的是单线程模型，也就是说，所有任务排成�
 
 Web Worker的目的，就是为JavaScript创造多线程环境，允许主线程将一些任务分配给子线程。在主线程运行的同时，子线程在后台运行，两者互不干扰。等到子线程完成计算任务，再把结果返回给主线程。因此，每一个子线程就好像一个“工人”（worker），默默地完成自己的工作。这样做的好处是，一些高计算量或高延迟的工作，被worker线程负担了，所以主进程（通常是UI进程）就会很流畅，不会被阻塞或拖慢。
 
-Worker线程分成好几种。
+#### Worker线程分成好几种。
 
 - 普通的Worker：只能与创造它们的主进程通信。
 - Shared Worker：能被所有同源的进程获取（比如来自不同的浏览器窗口、iframe窗口和其他Shared worker），它们必须通过一个端口通信。
 - ServiceWorker：实际上是一个在网络应用与浏览器或网络层之间的代理层。它可以拦截网络请求，使得离线访问成为可能。
 
-Web Worker有以下几个特点：
+#### Web Worker有以下几个特点：
 
 - **同域限制**。子线程加载的脚本文件，必须与主线程的脚本文件在同一个域。
 - **DOM限制**。子线程所在的全局对象，与主进程不一样，它无法读取网页的DOM对象，即`document`、`window`、`parent`这些对象，子线程都无法得到。（但是，`navigator`对象和`location`对象可以获得。）
 - **脚本限制**。子线程无法读取网页的全局变量和函数，也不能执行alert和confirm方法，不过可以执行setInterval和setTimeout，以及使用XMLHttpRequest对象发出AJAX请求。
 - **文件限制**。子线程无法读取本地文件，即子线程无法打开本机的文件系统（file://），它所加载的脚本，必须来自网络。
+
+#### 我们可以做什么：
+
+1. 可以加载一个JS进行大量的复杂计算而不挂起主进程，并通过postMessage，onmessage进行通信
+2. 可以在worker中通过importScripts(url)加载另外的脚本文件
+3. 可以使用 setTimeout(), clearTimeout(), setInterval(), and clearInterval()
+4. 可以使用XMLHttpRequest来发送请求
+5. 可以访问navigator的部分属性
+
+#### 有那些局限性：
+
+1. 不能跨域加载JS
+2. worker内代码不能访问DOM
+3. 各个浏览器对Worker的实现不大一致，例如FF里允许worker中创建新的worker,而Chrome中就不行
+4. 不是每个浏览器都支持这个新特性
+
+
 
 使用之前，检查浏览器是否支持这个API。
 
@@ -333,7 +350,7 @@ self.addEventListener('fetch', function(event) {
 
 先看网页代码`index.html`。
 
-```
+```html
 <!DOCTYPE html>
 <html>
 <head>
@@ -363,12 +380,11 @@ self.addEventListener('fetch', function(event) {
     });
   </script></body>
 </html>
-
 ```
 
 然后是Service worker脚本`sw.js`。
 
-```
+```javascript
 // The SW will be shutdown when not in use to save memory,
 // be aware that any global state is likely to disappear
 console.log("SW startup");
@@ -385,7 +401,6 @@ self.addEventListener('fetch', function(event) {
   console.log("Caught a fetch!");
   event.respondWith(new Response("Hello world!"));
 });
-
 ```
 
 每一次浏览器向服务器要求一个文件的时候，就会触发`fetch`事件。Service worker可以在发出这个请求之前，前拦截它。
@@ -417,7 +432,7 @@ self.addEventListener('fetch', function(event) {
 
 下面的代码是一个将所有JPG、PNG图片请求，改成WebP格式返回的例子。
 
-```
+```javascript
 "use strict";
 
 // Listen to fetch events
@@ -443,7 +458,6 @@ self.addEventListener('fetch', function(event) {
     }
   }
 });
-
 ```
 
 如果请求失败，可以通过Promise的`catch`方法处理。
@@ -456,7 +470,6 @@ self.addEventListener('fetch', function(event) {
     })
   );
 });
-
 ```
 
 登记成功后，可以在Chrome浏览器访问`chrome://inspect/#service-workers`，查看整个浏览器目前正在运行的Service worker。访问`chrome://serviceworker-internals`，可以查看浏览器目前安装的所有Service worker。
@@ -524,7 +537,7 @@ function updateStaticCache() {
 
 安装以后，就需要激活。
 
-```
+```javascript
 self.addEventListener('activate', function (event) {
   event.waitUntil(
     caches.keys()
@@ -540,8 +553,85 @@ self.addEventListener('activate', function (event) {
       })
   );
 });
-
 ```
+
+### Worker的其他尝试
+
+我们已经知道Worker通过接收一个URL来创建一个worker，那么我们是否可以利用web worker来做一些类似jsonp的请求呢，大家知道jsonp是通过插入script标签来加载json数据的，而script元素在加载和执行过程中都是阻塞式的，如果能利用web worker实现异步加载将会非常不错。
+
+```javascript
+// /aj/webWorker/core.js
+function $E(id) {
+    return document.getElementById(id);
+}
+onload =function() {
+    //通过web worker加载
+    $E('workerLoad').onclick =function() {
+        var url ='http://js.wcdn.cn/aj/mblog/face2';
+        var d = (new Date()).valueOf();
+        var worker =new Worker(url);
+        worker.onmessage =function(obj) {
+            console.log('web worker: '+ ((new Date()).valueOf() - d));
+        };
+    };
+    //通过jsonp加载
+    $E('jsonpLoad').onclick =function() {
+        var url ='http://js.wcdn.cn/aj/mblog/face1';
+        var d = (new Date()).valueOf();
+        STK.core.io.scriptLoader({
+            method:'post',
+            url : url,
+            onComplete : function() {
+                console.log('jsonp: '+ ((new Date()).valueOf() - d));
+            }
+        });
+    };
+    //通过ajax加载
+    $E('ajaxLoad').onclick =function() {
+        var url ='http://js.wcdn.cn/aj/mblog/face';
+        var d = (new Date()).valueOf();
+        STK.core.io.ajax({
+            url : url,
+            onComplete : function(json) {
+                console.log('ajax: '+ ((new Date()).valueOf() - d));
+            }
+        });
+    };
+};
+```
+
+HTML页面：/aj/webWorker/worker.html
+
+```html
+<!DOCTYPE HTML>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+<title>Worker example: load data</title>
+<script src="http://js.t.sinajs.cn/STK/js/gaea.1.14.js" type="text/javascript"></script>
+<script type="text/javascript" src="http://js.wcdn.cn/aj/webWorker/core.js"></script>
+</head>
+<body>
+    <input type="button" id="workerLoad" value="web worker加载"></input>
+    <input type="button" id="jsonpLoad" value="jsonp加载"></input>
+    <input type="button" id="ajaxLoad" value="ajax加载"></input>
+</body>
+</html>
+```
+
+得到控制台输出：
+
+
+
+```javascript
+web worker: 174
+jsonp: 25
+ajax: 38
+```
+
+这个例子将通过 web worker、jsonp、ajax三种不同的方式来加载一个169.42KB大小的JSON数据高位，所以用web worker来加载数据还是比较慢的，即便是大数据量情况下也没任何优势，可能是Worker初始化新起线程比较耗时间。除了在加载过程中是无阻塞的之外没有任何优势。
+
+web worker是不支持跨域加载JS的，这对于将静态文件部署到单独的静态服务器的网站来说是个坏消息。所以web worker只能用来加载同域下的json数据，而这方面ajax已经可以做到了，而且效率更高更通用。还是让Worker做它自己擅长的事吧。
 
 ## 参考链接
 
